@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TransitPulse Dashboard</title>
+<style>
+  :root { --bg:#f5f7fa; --card:#fff; --accent:#1a73e8; --text:#202124; --muted:#5f6368; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin:0; background:var(--bg); color:var(--text); }
+  header { background:var(--accent); color:#fff; padding:1rem 1.5rem; }
+  header h1 { margin:0; font-size:1.3rem; }
+  header p { margin:.2rem 0 0; font-size:.85rem; opacity:.9; }
+  main { max-width:1100px; margin:1.5rem auto; padding:0 1rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:1rem; }
+  .card { background:var(--card); border-radius:8px; padding:1rem 1.25rem; box-shadow:0 1px 3px rgba(0,0,0,.12); }
+  .card h2 { font-size:1rem; margin:.2rem 0 .75rem; color:var(--accent); }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th, td { text-align:left; padding:.4rem .5rem; border-bottom:1px solid #eee; }
+  th { color:var(--muted); font-weight:600; }
+  .stats { display:flex; flex-wrap:wrap; gap:.75rem; }
+  .stat { background:#f1f5fd; border-radius:6px; padding:.5rem .8rem; min-width:110px; }
+  .stat b { display:block; font-size:1.1rem; }
+  .stat span { font-size:.75rem; color:var(--muted); }
+  label { display:block; margin:.5rem 0 .2rem; font-size:.85rem; color:var(--muted); }
+  input, button { padding:.45rem .6rem; border:1px solid #dadce0; border-radius:4px; font-size:.9rem; }
+  input { width:100%; }
+  button { background:var(--accent); color:#fff; border:none; cursor:pointer; margin-top:.75rem; }
+  button:hover { filter:brightness(1.1); }
+  .badge { display:inline-block; background:#e8f0fe; color:var(--accent); border-radius:10px; padding:.1rem .55rem; font-size:.75rem; margin-left:.4rem; }
+  .note { font-size:.78rem; color:var(--muted); margin-top:.6rem; }
+  .error { color:#c5221f; font-size:.85rem; }
+  footer { text-align:center; color:var(--muted); font-size:.75rem; padding:1.5rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TransitPulse</h1>
+  <p>Public transport delay analysis &amp; prediction — data shown is <b>synthetic demonstration data</b>, model output is a <b>statistical estimate</b>, not a real observation.</p>
+</header>
+<main>
+  <section class="grid">
+    <div class="card">
+      <h2>Delay statistics</h2>
+      <div class="stats" id="stats"><span class="note">loading…</span></div>
+      <p class="note">Across all stored synthetic observations.</p>
+    </div>
+    <div class="card">
+      <h2>Top delayed stops</h2>
+      <table id="top"><thead><tr><th>Stop</th><th>Records</th><th>Mean</th><th>Max</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Detected patterns</h2>
+      <div id="patterns"><span class="note">loading…</span></div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:1rem">
+    <h2>Delay estimate</h2>
+    <form id="predict-form">
+      <div class="grid">
+        <div><label for="stop_id">Stop ID</label><input id="stop_id" required placeholder="STOP_001"></div>
+        <div><label for="line">Line</label><input id="line" required placeholder="LINE_01"></div>
+        <div><label for="direction">Direction</label><input id="direction" value="North"></div>
+        <div><label for="scheduled_time">Scheduled time</label><input id="scheduled_time" type="datetime-local" required></div>
+      </div>
+      <button type="submit">Estimate delay</button>
+      <span class="error" id="predict-error"></span>
+    </form>
+    <div id="predict-result" style="margin-top:.75rem"></div>
+    <p class="note">Estimates come from a trained model (or a historical-average baseline when no model exists) and are labelled as predictions.</p>
+  </section>
+</main>
+<footer>TransitPulse — synthetic demo data · API docs at <a href="/docs">/docs</a> · <a href="/health">/health</a></footer>
+<script>
+const API = "";
+
+function el(id){ return document.getElementById(id); }
+
+async function loadStats(){
+  try{
+    const r = await fetch(API + "/api/v1/delays/stats");
+    const d = await r.json();
+    const items = [
+      ["Records", d.count], ["Mean", d.mean.toFixed(1) + " min"],
+      ["Median", d.median.toFixed(1) + " min"], ["Std dev", d.std_dev.toFixed(1)],
+      ["Min", d.min + " min"], ["Max", d.max + " min"], ["P90", d.p90.toFixed(1) + " min"],
+    ];
+    el("stats").innerHTML = items.map(([k,v]) =>
+      '<div class="stat"><b>' + v + '</b><span>' + k + '</span></div>').join("");
+  }catch(e){ el("stats").innerHTML = '<span class="error">failed to load statistics</span>'; }
+}
+
+async function loadTop(){
+  try{
+    const r = await fetch(API + "/api/v1/delays/top?group_by=stop&limit=5");
+    const d = await r.json();
+    el("top").querySelector("tbody").innerHTML = d.items.map(i =>
+      "<tr><td>" + i.name + " <span class='badge'>" + i.key + "</span></td><td>" + i.count +
+      "</td><td>" + i.mean_delay.toFixed(1) + " min</td><td>" + i.max_delay + " min</td></tr>").join("");
+  }catch(e){ /* leave table empty */ }
+}
+
+async function loadPatterns(){
+  try{
+    const r = await fetch(API + "/api/v1/patterns/");
+    const d = await r.json();
+    el("patterns").innerHTML = d.patterns.map(p =>
+      "<p><b>" + p.pattern_type.replace(/_/g," ") + "</b> <span class='badge'>confidence " +
+      (p.confidence*100).toFixed(0) + "%</span><br>" + p.description + "</p>").join("");
+  }catch(e){ el("patterns").innerHTML = '<span class="error">failed to load patterns</span>'; }
+}
+
+el("predict-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  el("predict-error").textContent = "";
+  el("predict-result").innerHTML = "";
+  const payload = {
+    stop_id: el("stop_id").value.trim(),
+    line: el("line").value.trim(),
+    direction: el("direction").value.trim(),
+    scheduled_time: el("scheduled_time").value + ":00",
+  };
+  try{
+    const r = await fetch(API + "/api/v1/predict/", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    if(!r.ok){
+      const err = await r.json().catch(() => ({}));
+      el("predict-error").textContent = err.detail || ("request failed: " + r.status);
+      return;
+    }
+    const d = await r.json();
+    el("predict-result").innerHTML =
+      '<div class="stats">' +
+      '<div class="stat"><b>' + d.predicted_delay_minutes.toFixed(1) + ' min</b><span>estimated delay</span></div>' +
+      '<div class="stat"><b>' + d.confidence_lower.toFixed(1) + ' … ' + d.confidence_upper.toFixed(1) + '</b><span>confidence range (min)</span></div>' +
+      '<div class="stat"><b>' + d.model_name + '</b><span>model (v' + d.model_version + ')</span></div>' +
+      '</div>';
+  }catch(e){
+    el("predict-error").textContent = "network error: " + e;
+  }
+});
+
+loadStats(); loadTop(); loadPatterns();
+</script>
+</body>
+</html>
